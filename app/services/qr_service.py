@@ -3,6 +3,8 @@ QR Code Service
 Handles QR token generation, verification, and expiry management
 """
 import logging
+from PIL import Image
+import os
 import secrets
 import hashlib
 from datetime import datetime, timedelta
@@ -16,6 +18,13 @@ import redis.asyncio as redis
 
 logger = logging.getLogger(__name__)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+LOGO_PATH = os.path.join(
+    BASE_DIR,
+    "logo",
+    "logo.png"
+)
 
 class QRService:
     """Manages QR code generation and verification for swaps"""
@@ -237,36 +246,89 @@ class QRService:
         except Exception as e:
             logger.error(f"Error marking token as used: {e}")
             return False
-    
+
+
     def generate_qr_image(self, qr_token: str) -> str:
         """
-        Generate QR code image from token
-        Returns base64 encoded PNG image
+        Generate QR code with logo in center
+        Returns base64 encoded PNG
         """
+
         try:
-            # Create QR code
+            # ----------------------------
+            # Create QR Code
+            # ----------------------------
             qr = qrcode.QRCode(
                 version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                error_correction=qrcode.constants.ERROR_CORRECT_H,  # HIGH for logo
                 box_size=10,
-                border=4,
+                border=1,
             )
+
             qr.add_data(qr_token)
             qr.make(fit=True)
-            
-            # Generate image
-            img = qr.make_image(fill_color="black", back_color="white")
-            
-            # Convert to base64
+
+            qr_img = qr.make_image(
+                fill_color="black",
+                back_color="white"
+            ).convert("RGBA")
+
+            # ----------------------------
+            # Load Logo
+            # ----------------------------
+
+
+            logo = Image.open(LOGO_PATH).convert("RGBA")
+
+            # ----------------------------
+            # Resize Logo
+            # ----------------------------
+            qr_width, qr_height = qr_img.size
+
+            logo_size = qr_width // 4   # 25% of QR size
+            logo = logo.resize(
+                (logo_size, logo_size),
+                Image.Resampling.LANCZOS
+            )
+
+            # ----------------------------
+            # Position Logo (Center)
+            # ----------------------------
+            pos = (
+                (qr_width - logo_size) // 2,
+                (qr_height - logo_size) // 2
+            )
+
+            # ----------------------------
+            # Paste Logo
+            # ----------------------------
+            qr_img.paste(logo, pos, logo)
+
+            # ----------------------------
+            # Save (Optional)
+            # ----------------------------
+            os.makedirs("generated_qr", exist_ok=True)
+            file_path = f"generated_qr/qr_{qr_token[:8]}.png"
+            qr_img.save(file_path)
+
+            print("Saved at:", os.path.abspath(file_path))
+
+            # ----------------------------
+            # Convert to Base64
+            # ----------------------------
             buffer = BytesIO()
-            img.save(buffer, format="PNG")
-            img_base64 = base64.b64encode(buffer.getvalue()).decode()
-            
+            qr_img.save(buffer, format="PNG")
+
+            img_base64 = base64.b64encode(
+                buffer.getvalue()
+            ).decode()
+
             return f"data:image/png;base64,{img_base64}"
-        
+
         except Exception as e:
-            logger.error(f"Error generating QR image: {e}")
+            print("QR Error:", e)
             return ""
+
     
     async def cleanup_expired_tokens(self):
         """Clean up expired QR tokens (scheduled task)"""
